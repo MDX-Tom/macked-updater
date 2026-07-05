@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Swift / Xcode
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# Local build artifacts
+dist/
+*.dmg
+
+# Local runtime/cache files
+/tmp/
+tmp/
+*.log
+
+# Local editor settings
+.vscode/
+.idea/
+
+# Local development handoff notes
+codex/

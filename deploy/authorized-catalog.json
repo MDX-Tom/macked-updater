@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "sourceName": "Example Update Catalog",
+  "generatedAt": "2026-07-05T00:00:00Z",
+  "apps": [
+    {
+      "name": "Nebula Notes",
+      "bundleIdentifier": "com.example.nebula-notes",
+      "latestVersion": "2.7.0",
+      "officialPageURL": "https://updates.example.com/apps/nebula-notes",
+      "downloadURL": "https://updates.example.com/downloads/nebula-notes-2.7.0.dmg",
+      "releaseNotesURL": "https://updates.example.com/apps/nebula-notes/releases/2.7.0"
+    },
+    {
+      "name": "Prism Paint",
+      "bundleIdentifier": "com.example.prism-paint",
+      "latestVersion": "4.0.0",
+      "officialPageURL": "https://updates.example.com/apps/prism-paint",
+      "downloadPageURL": "https://updates.example.com/apps/prism-paint/download",
+      "releaseNotesURL": "https://updates.example.com/apps/prism-paint/releases/4.0.0"
+    }
+  ]
+}
