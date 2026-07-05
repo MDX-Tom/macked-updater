@@ -6,7 +6,13 @@
   <img src="assets/app-icon.png" alt="Macked Updater icon" width="112" height="112">
 </p>
 
-Macked Updater is a native macOS app for checking installed application versions and aggregating update sources. It scans local `.app` bundles, compares installed versions with available updates, and shows official pages, release notes, and optional authenticated source links in one dashboard.
+**Macked Updater** is a native macOS update assistant built around one core workflow: scan your installed apps, automatically check whether they are available on **Macked.app**, compare versions, and download matched updates directly to your Mac.
+
+It keeps the process local and fast: installed apps stay on your machine, Macked.app lookups run from your signed-in local session, and downloads go straight into `~/Downloads` without opening a browser tab for every app.
+
+<p align="center">
+  <strong>Scan Apps → Match on Macked.app → Compare Versions → Download Updates</strong>
+</p>
 
 | Light | Dark |
 | --- | --- |
@@ -14,31 +20,44 @@ Macked Updater is a native macOS app for checking installed application versions
 
 > Screenshots are based on the real app UI and use fictitious app names and bundle identifiers.
 
-## Highlights
+## Built for Macked.app Updates
 
-- Scan `/Applications`, `~/Applications`, and `/System/Applications`.
-- Read app name, bundle identifier, version, build number, install path, modification date, icon, Sparkle feed, and App Store receipt hints.
-- Two-step update check:
-  1. Fast official-source version check.
-  2. Optional Macked.app coverage and download metadata check after login.
-- Show current version, latest official version, optional Macked.app version, source name, page links, and download/release-note links.
-- Mark matched entries with a `Macked Included` badge.
-- Download queue for optional Macked.app downloads with downloaded size, total size, live speed, completion, and failure states.
-- Local-only cache. The installed app list is not uploaded to any server.
-- Light and dark mode friendly SwiftUI interface.
+- **Automatic Macked.app update checks**: scan your installed macOS apps and automatically search Macked.app for matching entries after login.
+- **Version comparison at a glance**: see your installed version, the latest official version, and the latest Macked.app version in one dashboard.
+- **Direct in-app downloads**: when a Macked.app match is available, the app resolves the download flow and saves the file directly to `~/Downloads`.
+- **Macked Included badge**: instantly identify apps that are already matched with Macked.app entries.
+- **Download queue**: track downloaded size, total size, live speed, completion, and failure states.
+- **Official source side-by-side**: keep official pages, official download links, and release notes visible next to Macked.app metadata.
+- **Local-first design**: app scanning and cache data remain on your Mac.
+- **Native macOS UI**: SwiftUI dashboard with sidebar navigation, clean cards, light/dark mode, and macOS-style controls.
 
-## Update Sources
+## Macked.app Update Flow
 
-Macked Updater currently supports:
+Sign in once, then let Macked Updater handle the Macked.app update flow:
 
-- Sparkle appcast (`SUFeedURL` from the app bundle).
-- Homebrew Cask (`brew list --cask` and `brew info --cask --json=v2`).
+1. scan installed `.app` bundles;
+2. search Macked.app for matching app pages;
+3. compare installed, official, and Macked.app versions;
+4. mark matched apps with `Macked Included`;
+5. download matched updates directly from the app when you click `Download Macked`.
+
+### Local App Scanner for Macked.app Matching
+
+- Scans `/Applications`, `~/Applications`, and `/System/Applications`.
+- Reads app name, bundle identifier, version, build number, install path, modification date, icon, Sparkle feed, and App Store receipt hints.
+- Deduplicates app bundles and prefers user-installed copies over system-managed copies.
+
+## Macked.app First, Optional Fallbacks
+
+Macked Updater is designed around Macked.app matching and downloading. It also keeps a few optional metadata sources to improve version comparison and context:
+
+- Macked.app search, detail parsing, version metadata, and direct download resolution after sign-in.
+- Official app pages and release notes for comparison context.
+- Sparkle appcast (`SUFeedURL` from the app bundle), when available.
+- Homebrew Cask metadata, when Homebrew is installed.
 - Mac App Store receipt / lookup metadata.
-- GitHub Releases when configured.
-- Adobe Help Center release-note pages for common Adobe apps.
-- Self-hosted JSON catalogs.
-- Macked.app search/detail/download metadata after the user signs in.
-- Manual official website search fallback for unknown apps.
+- Self-hosted JSON catalogs for local testing or private metadata.
+- Manual website search fallback for apps that cannot be matched automatically.
 
 ## Requirements
 
