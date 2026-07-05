@@ -72,18 +72,22 @@ Debug app bundle:
 ./script/build_and_run.sh --verify
 ```
 
-Release app and DMG:
+Release app and DMGs:
 
 ```bash
 ./script/package_release.sh
 ```
 
-The release script creates:
+The release script creates Apple Silicon, Intel, and universal builds. Each DMG includes an `/Applications` shortcut for drag-and-drop installation.
 
 ```text
 dist/Macked Updater.app
-dist/MackedUpdater-0.1.11.dmg
-dist/MackedUpdater.dmg
+dist/Macked Updater-universal.app
+dist/Macked Updater-arm64.app
+dist/Macked Updater-intel.app
+dist/MackedUpdater_0.1.0_apple_silicon_aarch64.dmg
+dist/MackedUpdater_0.1.0_intel_x64.dmg
+dist/MackedUpdater_0.1.0_universal.dmg
 ```
 
 These local builds use ad-hoc signing. For public distribution, sign and notarize with your own Apple Developer identity.

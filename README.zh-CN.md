@@ -78,12 +78,16 @@ open Package.swift
 ./script/package_release.sh
 ```
 
-打包产物：
+打包脚本会同时生成 Apple Silicon、Intel 和 Universal 三套产物。每个 DMG 内都包含 `/Applications` 快捷方式，方便拖拽安装。
 
 ```text
 dist/Macked Updater.app
-dist/MackedUpdater-0.1.11.dmg
-dist/MackedUpdater.dmg
+dist/Macked Updater-universal.app
+dist/Macked Updater-arm64.app
+dist/Macked Updater-intel.app
+dist/MackedUpdater_0.1.0_apple_silicon_aarch64.dmg
+dist/MackedUpdater_0.1.0_intel_x64.dmg
+dist/MackedUpdater_0.1.0_universal.dmg
 ```
 
 本地包使用 ad-hoc 签名。如果要公开分发，请使用自己的 Apple Developer 身份签名并公证。
