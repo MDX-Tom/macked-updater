@@ -186,7 +186,7 @@ struct AppDetailView: View {
 
     private func homebrewSourceText(_ info: AppUpdateInfo) -> String {
         if info.source?.kind == .homebrewCask {
-            if let version = info.latestVersion {
+            if let version = info.officialLatestVersion ?? info.latestVersion {
                 return "Matched · \(version)"
             }
             return "Matched"

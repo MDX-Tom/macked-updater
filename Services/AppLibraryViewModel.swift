@@ -651,6 +651,6 @@ final class AppLibraryViewModel: ObservableObject {
             enriched.downloadURL = enriched.officialDownloadURL ?? enriched.mackedDownloadURL ?? previous?.downloadURL
         }
 
-        return enriched
+        return coordinator.merge(app: app, official: enriched, macked: nil)
     }
 }
