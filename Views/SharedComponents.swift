@@ -279,7 +279,11 @@ struct ConceptSecondaryButtonStyle: ButtonStyle {
 
 extension AppUpdateInfo {
     var isMackedIncluded: Bool {
-        mackedPageURL != nil || mackedDownloadURL != nil || mackedSourceName != nil || mackedLatestVersion != nil
+        mackedPageURL != nil
+            || mackedDownloadURL != nil
+            || mackedSourceName != nil
+            || mackedLatestVersion != nil
+            || mackedLatestBuildVersion != nil
     }
 }
 
@@ -295,7 +299,7 @@ extension UpdateStatus {
         case .updateAvailable:
             return "arrow.down.circle.fill"
         case .error:
-            return "exclamationmark.triangle.fill"
+            return "questionmark.circle.fill"
         }
     }
 
@@ -310,7 +314,7 @@ extension UpdateStatus {
         case .updateAvailable:
             return .blue
         case .error:
-            return .red
+            return .orange
         }
     }
 

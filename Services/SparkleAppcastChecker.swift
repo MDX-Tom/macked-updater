@@ -42,6 +42,7 @@ struct SparkleAppcastChecker {
                 appID: app.id,
                 currentVersion: app.shortVersion,
                 latestVersion: latestVersion,
+                latestBuildVersion: latest.buildVersion,
                 status: status,
                 source: source,
                 officialPageURL: preferredPageURL ?? latest.pageURL,

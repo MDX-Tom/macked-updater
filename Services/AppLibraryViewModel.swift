@@ -115,6 +115,7 @@ final class AppLibraryViewModel: ObservableObject {
         }
 
         isChecking = true
+        defer { isChecking = false }
         statusMessage = "Step 1/2: checking official versions..."
         let appsToCheck = visibleApps
         let settingsSnapshot = settings
@@ -123,11 +124,14 @@ final class AppLibraryViewModel: ObservableObject {
         let cachedBeforeCheck = updateInfoByAppID
         let officialConcurrencyLimit = 12
 
+        var checkingInfo = updateInfoByAppID
         for app in appsToCheck {
-            updateInfoByAppID[app.id] = .checking(for: app)
+            checkingInfo[app.id] = .checking(for: app)
         }
+        updateInfoByAppID = checkingInfo
 
         var officialCompleted = 0
+        var pendingOfficialUpdates: [String: AppUpdateInfo] = [:]
 
         await withTaskGroup(of: (InstalledApp, AppUpdateInfo).self) { group in
             var iterator = appsToCheck.makeIterator()
@@ -152,35 +156,39 @@ final class AppLibraryViewModel: ObservableObject {
             }
 
             while let (app, info) = await group.next() {
-                updateInfoByAppID[app.id] = preservingMackedMetadata(
+                pendingOfficialUpdates[app.id] = preservingMackedMetadata(
                     in: info,
                     for: app,
                     previous: cachedBeforeCheck[app.id]
                 )
                 officialCompleted += 1
-                statusMessage = "Step 1/2: checked official versions for \(officialCompleted) of \(appsToCheck.count) apps"
+                if officialCompleted.isMultiple(of: 8) || officialCompleted == appsToCheck.count {
+                    var published = updateInfoByAppID
+                    published.merge(pendingOfficialUpdates) { _, new in new }
+                    updateInfoByAppID = published
+                    pendingOfficialUpdates.removeAll(keepingCapacity: true)
+                    statusMessage = "Step 1/2: checked official versions for \(officialCompleted) of \(appsToCheck.count) apps"
+                }
                 addNext()
             }
         }
 
-        await database.saveUpdateCache(updateInfoByAppID)
-
         guard settingsSnapshot.checkMackedApp else {
-            isChecking = false
             statusMessage = "Official update check complete"
+            await database.saveUpdateCache(updateInfoByAppID)
             return
         }
 
         guard await ensureMackedLogin(for: "Macked.app lookup") else {
-            isChecking = false
             statusMessage = "Official check complete. Login to Macked.app to run step 2/2."
             await database.saveUpdateCache(updateInfoByAppID)
             return
         }
 
         statusMessage = "Step 2/2: checking Macked.app coverage..."
-        let mackedConcurrencyLimit = 10
+        let mackedConcurrencyLimit = 12
         var mackedCompleted = 0
+        var pendingMackedUpdates: [String: AppUpdateInfo] = [:]
 
         await withTaskGroup(of: (InstalledApp, AppUpdateInfo?).self) { group in
             var iterator = appsToCheck.makeIterator()
@@ -194,7 +202,8 @@ final class AppLibraryViewModel: ObservableObject {
                     let result = await coordinator.checkMacked(
                         app: app,
                         userSource: sourceSnapshot[app.id],
-                        settings: settingsSnapshot
+                        settings: settingsSnapshot,
+                        cachedInfo: cachedBeforeCheck[app.id]
                     )
                     return (app, result)
                 }
@@ -207,15 +216,20 @@ final class AppLibraryViewModel: ObservableObject {
             while let (app, mackedInfo) = await group.next() {
                 let officialInfo = updateInfoByAppID[app.id]
                     ?? AppUpdateInfo.unknown(for: app, source: OfficialWebsiteResolver().unresolvedInfo(for: app).source)
-                updateInfoByAppID[app.id] = coordinator.merge(app: app, official: officialInfo, macked: mackedInfo)
+                pendingMackedUpdates[app.id] = coordinator.merge(app: app, official: officialInfo, macked: mackedInfo)
                 mackedCompleted += 1
-                statusMessage = "Step 2/2: checked Macked.app for \(mackedCompleted) of \(appsToCheck.count) apps"
+                if mackedCompleted.isMultiple(of: 6) || mackedCompleted == appsToCheck.count {
+                    var published = updateInfoByAppID
+                    published.merge(pendingMackedUpdates) { _, new in new }
+                    updateInfoByAppID = published
+                    pendingMackedUpdates.removeAll(keepingCapacity: true)
+                    statusMessage = "Step 2/2: checked Macked.app for \(mackedCompleted) of \(appsToCheck.count) apps"
+                }
                 addNext()
             }
         }
 
         await database.saveUpdateCache(updateInfoByAppID)
-        isChecking = false
         statusMessage = "Two-step update check complete"
     }
 
@@ -231,7 +245,12 @@ final class AppLibraryViewModel: ObservableObject {
 
         if settings.checkMackedApp, await ensureMackedLogin(for: "Macked.app lookup") {
             statusMessage = "Checking \(app.name) on Macked.app..."
-            let macked = await coordinator.checkMacked(app: app, userSource: userSources[app.id], settings: settings)
+            let macked = await coordinator.checkMacked(
+                app: app,
+                userSource: userSources[app.id],
+                settings: settings,
+                cachedInfo: previousInfo
+            )
             updateInfoByAppID[app.id] = coordinator.merge(app: app, official: officialWithMackedMetadata, macked: macked)
         }
 
@@ -289,7 +308,12 @@ final class AppLibraryViewModel: ObservableObject {
             let official = await coordinator.checkOfficial(app: app, userSource: userSources[app.id], settings: settings)
             let officialWithMackedMetadata = preservingMackedMetadata(in: official, for: app, previous: previousInfo)
             if settings.checkMackedApp, await ensureMackedLogin(for: "Macked.app lookup") {
-                let macked = await coordinator.checkMacked(app: app, userSource: userSources[app.id], settings: settings)
+                let macked = await coordinator.checkMacked(
+                    app: app,
+                    userSource: userSources[app.id],
+                    settings: settings,
+                    cachedInfo: previousInfo
+                )
                 updateInfoByAppID[app.id] = coordinator.merge(app: app, official: officialWithMackedMetadata, macked: macked)
             } else {
                 updateInfoByAppID[app.id] = officialWithMackedMetadata
@@ -366,6 +390,7 @@ final class AppLibraryViewModel: ObservableObject {
                 mutableInfo.mackedDownloadURL = detail.downloadURL
                 mutableInfo.downloadURL = mutableInfo.officialDownloadURL ?? mutableInfo.downloadURL
                 mutableInfo.mackedLatestVersion = detail.latestVersion ?? mutableInfo.mackedLatestVersion
+                mutableInfo.mackedLatestBuildVersion = detail.latestBuildVersion ?? mutableInfo.mackedLatestBuildVersion
                 mutableInfo.mackedPageURL = detail.pageURL
                 mutableInfo.mackedLoginURL = detail.loginURL
                 mutableInfo.loginURL = detail.loginURL
@@ -541,7 +566,10 @@ final class AppLibraryViewModel: ObservableObject {
                 source: OfficialWebsiteResolver().unresolvedInfo(for: app).source
             )
 
-            let alreadyHasMacked = info.mackedPageURL != nil || info.mackedLatestVersion != nil || info.mackedSourceName != nil
+            let alreadyHasMacked = info.mackedPageURL != nil
+                || info.mackedLatestVersion != nil
+                || info.mackedLatestBuildVersion != nil
+                || info.mackedSourceName != nil
             guard !alreadyHasMacked || info.errorMessage?.localizedCaseInsensitiveContains("No Macked.app result") == true else {
                 continue
             }
@@ -573,6 +601,7 @@ final class AppLibraryViewModel: ObservableObject {
             let hadMackedMetadata = info.mackedPageURL != nil
                 || info.mackedDownloadURL != nil
                 || info.mackedLatestVersion != nil
+                || info.mackedLatestBuildVersion != nil
                 || info.mackedSourceName != nil
                 || info.source?.kind == .mackedApp
 
@@ -585,12 +614,14 @@ final class AppLibraryViewModel: ObservableObject {
             info.mackedLoginURL = nil
             info.mackedSourceName = nil
             info.mackedLatestVersion = nil
+            info.mackedLatestBuildVersion = nil
             info.loginURL = nil
             info.downloadURL = info.officialDownloadURL
 
             if info.source?.kind == .mackedApp {
                 if let officialLatestVersion = info.officialLatestVersion {
                     info.latestVersion = officialLatestVersion
+                    info.latestBuildVersion = info.officialLatestBuildVersion
                     info.source = UpdateSource(
                         kind: .officialWebsite,
                         name: info.officialSourceName ?? "Official",
@@ -601,6 +632,7 @@ final class AppLibraryViewModel: ObservableObject {
                 } else {
                     let fallback = resolver.unresolvedInfo(for: app)
                     info.latestVersion = nil
+                    info.latestBuildVersion = nil
                     info.status = .unknown
                     info.source = fallback.source
                     info.officialPageURL = fallback.officialPageURL
@@ -638,7 +670,14 @@ final class AppLibraryViewModel: ObservableObject {
         if enriched.mackedLatestVersion == nil {
             enriched.mackedLatestVersion = previous?.mackedLatestVersion
         }
-        if enriched.mackedSourceName == nil, enriched.mackedPageURL != nil || enriched.mackedDownloadURL != nil || enriched.mackedLatestVersion != nil {
+        if enriched.mackedLatestBuildVersion == nil {
+            enriched.mackedLatestBuildVersion = previous?.mackedLatestBuildVersion
+        }
+        if enriched.mackedSourceName == nil,
+           enriched.mackedPageURL != nil
+            || enriched.mackedDownloadURL != nil
+            || enriched.mackedLatestVersion != nil
+            || enriched.mackedLatestBuildVersion != nil {
             enriched.mackedSourceName = previous?.mackedSourceName ?? UpdateSourceKind.mackedApp.title
         }
         if enriched.mackedLoginURL == nil, let pageURL = enriched.mackedPageURL {

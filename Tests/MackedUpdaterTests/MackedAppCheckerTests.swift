@@ -87,6 +87,31 @@ final class MackedAppCheckerTests: XCTestCase {
         XCTAssertEqual(results.first?.detailURL.absoluteString, "https://macked.app/anygo-mac-crack.html")
     }
 
+    func testParsesDetailedIMazingVersionFromRESTSearch() throws {
+        let json = #"""
+        [
+          {
+            "id": 13756,
+            "title": "iMazing 3 3.5.5-24057 \u7834\u89e3\u7248",
+            "url": "https:\/\/macked.app\/imazing-3-crack.html",
+            "type": "post",
+            "subtype": "post"
+          }
+        ]
+        """#.data(using: .utf8)!
+
+        let result = try XCTUnwrap(
+            MackedAppChecker.parseRESTSearchResults(
+                data: json,
+                baseURL: URL(string: "https://macked.app")!
+            ).first
+        )
+
+        XCTAssertEqual(result.name, "iMazing 3")
+        XCTAssertEqual(result.latestVersion, "3.5.5")
+        XCTAssertEqual(result.latestBuildVersion, "24057")
+    }
+
     func testBestMatchRejectsAppleBundleFalsePositives() {
         let checker = MackedAppChecker()
         let launcher = makeApp(
@@ -154,6 +179,44 @@ final class MackedAppCheckerTests: XCTestCase {
 
         XCTAssertEqual(checker.bestMatch(for: anyGo, in: [anyGoResult])?.detailURL, anyGoResult.detailURL)
         XCTAssertEqual(checker.bestMatch(for: adobeTool, in: [adobeResult])?.detailURL, adobeResult.detailURL)
+    }
+
+    func testBestMatchUsesBundleGenerationToChooseIMazing3() {
+        let checker = MackedAppChecker()
+        let app = InstalledApp(
+            name: "iMazing",
+            bundleIdentifier: "com.DigiDNA.iMazing3Mac",
+            shortVersion: "3.5.5",
+            buildVersion: "24057",
+            installPath: "/Applications/iMazing.app",
+            isSystemApp: false,
+            modificationDate: nil,
+            sparkleFeedURL: nil,
+            hasMacAppStoreReceipt: true,
+            scanPriority: 2
+        )
+        let iMazing2 = MackedAppSearchResult(
+            name: "iMazing 2",
+            title: "iMazing 2 2.17.18.17697",
+            latestVersion: "2.17.18.17697",
+            detailURL: URL(string: "https://macked.app/imazing-2-crack.html")!,
+            imageURL: nil,
+            summary: nil
+        )
+        let iMazing3 = MackedAppSearchResult(
+            name: "iMazing 3",
+            title: "iMazing 3 3.5.5-24057",
+            latestVersion: "3.5.5",
+            latestBuildVersion: "24057",
+            detailURL: URL(string: "https://macked.app/imazing-3-crack.html")!,
+            imageURL: nil,
+            summary: nil
+        )
+
+        XCTAssertEqual(
+            checker.bestMatch(for: app, in: [iMazing2, iMazing3])?.detailURL,
+            iMazing3.detailURL
+        )
     }
 
     func testBestMatchKeepsAdobeActivationWhenLocalNameHasNoSpaces() {
@@ -225,6 +288,12 @@ final class MackedAppCheckerTests: XCTestCase {
         XCTAssertFalse(MackedAppChecker.shouldSkipMackedLookup(for: finalCutCreatorStudio))
     }
 
+    @MainActor
+    func testMackedCookiesAreNotForwardedToExternalDownloadHosts() async {
+        let header = await MackedCookieStore.cookieHeader(for: URL(string: "https://downloads.example.com/file.dmg")!)
+        XCTAssertNil(header)
+    }
+
     func testParsesDetailDownloadAndLoginLinks() throws {
         let html = #"""
         <html><head>
@@ -256,6 +325,25 @@ final class MackedAppCheckerTests: XCTestCase {
         XCTAssertEqual(detail.officialIsFree, true)
         XCTAssertTrue(detail.loginURL.absoluteString.contains("/user-sign?"))
         XCTAssertNotNil(detail.modifiedAt)
+    }
+
+    func testParsesDetailedIMazingVersionFromPage() throws {
+        let html = #"""
+        <html><head>
+          <link rel="canonical" href="https://macked.app/imazing-3-crack.html" />
+          <meta property="og:title" content="iMazing 3 3.5.5-24057 破解版 - iOS manager" />
+        </head><body>
+          <div><span class="attr-key">软件版本</span><span class="attr-value">3.5.5-24057</span></div>
+        </body></html>
+        """#
+
+        let detail = try MackedAppChecker.parseDetail(
+            html: html,
+            pageURL: URL(string: "https://macked.app/imazing-3-crack.html")!
+        )
+
+        XCTAssertEqual(detail.latestVersion, "3.5.5")
+        XCTAssertEqual(detail.latestBuildVersion, "24057")
     }
 
     func testParsesLoggedInDirectDownloadLinkInHiddenContent() throws {

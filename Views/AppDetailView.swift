@@ -26,7 +26,7 @@ struct AppDetailView: View {
             VStack(alignment: .leading, spacing: 26) {
                 header(app: app, info: info)
 
-                VersionComparisonView(currentVersion: app.displayVersion, latestVersion: info.latestVersion, status: info.status)
+                VersionComparisonView(currentVersion: app.displayVersion, latestVersion: info.latestDisplayVersion, status: info.status)
 
                 sourceSummary(app: app, info: info)
 
@@ -165,7 +165,7 @@ struct AppDetailView: View {
     private func errorPanel(_ error: String) -> some View {
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.red)
+                .foregroundStyle(.orange)
             Text(error)
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -173,12 +173,12 @@ struct AppDetailView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Color.orange.opacity(0.09), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func officialSourceText(_ info: AppUpdateInfo) -> String {
         let sourceName = info.officialSourceName ?? info.source?.name ?? "Unknown"
-        if let version = info.officialLatestVersion ?? info.latestVersion {
+        if let version = info.officialLatestDisplayVersion ?? info.latestDisplayVersion {
             return "\(sourceName) · \(version)"
         }
         return sourceName
@@ -186,7 +186,7 @@ struct AppDetailView: View {
 
     private func homebrewSourceText(_ info: AppUpdateInfo) -> String {
         if info.source?.kind == .homebrewCask {
-            if let version = info.officialLatestVersion ?? info.latestVersion {
+            if let version = info.officialLatestDisplayVersion ?? info.latestDisplayVersion {
                 return "Matched · \(version)"
             }
             return "Matched"
@@ -198,7 +198,7 @@ struct AppDetailView: View {
         guard info.isMackedIncluded else {
             return "Not found"
         }
-        if let version = info.mackedLatestVersion {
+        if let version = info.mackedLatestDisplayVersion {
             return "Included · \(version)"
         }
         return "Included"

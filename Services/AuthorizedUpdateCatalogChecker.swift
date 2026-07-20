@@ -90,6 +90,7 @@ struct AuthorizedUpdateCatalogChecker {
                 appID: app.id,
                 currentVersion: app.shortVersion,
                 latestVersion: latestVersion,
+                latestBuildVersion: latestBuild,
                 status: status,
                 source: UpdateSource(
                     kind: .authorizedCatalog,

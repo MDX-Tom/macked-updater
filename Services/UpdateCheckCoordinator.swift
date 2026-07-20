@@ -27,11 +27,17 @@ struct UpdateCheckCoordinator {
         return normalizedOfficialInfo(result, app: app)
     }
 
-    func checkMacked(app: InstalledApp, userSource: UserUpdateSource?, settings: AppSettings) async -> AppUpdateInfo? {
+    func checkMacked(
+        app: InstalledApp,
+        userSource: UserUpdateSource?,
+        settings: AppSettings,
+        cachedInfo: AppUpdateInfo? = nil
+    ) async -> AppUpdateInfo? {
         await checkMackedIfEnabled(
             app: app,
             userSource: validated(userSource: userSource),
-            settings: settings
+            settings: settings,
+            cachedInfo: cachedInfo
         )
     }
 
@@ -55,17 +61,23 @@ struct UpdateCheckCoordinator {
             return result
         }
 
-        async let sparkleTask = checkSparkleIfAvailable(app: app, settings: settings)
+        var firstError: AppUpdateInfo?
+        if let sparkleResult = await checkSparkleIfAvailable(app: app, settings: settings) {
+            if sparkleResult.status != .error {
+                return sparkleResult
+            }
+            firstError = sparkleResult
+        }
+
         async let homebrewTask = checkHomebrewIfAvailable(app: app, settings: settings)
         async let macAppStoreTask = checkMacAppStoreIfAvailable(app: app)
         async let adobeTask = checkAdobeOfficialIfAvailable(app: app)
 
-        let sparkleResult = await sparkleTask
         let homebrewResult = await homebrewTask
         let macAppStoreResult = await macAppStoreTask
         let adobeResult = await adobeTask
-        let priorityResults = [sparkleResult, homebrewResult, macAppStoreResult, adobeResult]
-        let firstError = priorityResults.compactMap { $0 }.first { $0.status == .error }
+        let priorityResults = [homebrewResult, macAppStoreResult, adobeResult]
+        firstError = firstError ?? priorityResults.compactMap { $0 }.first { $0.status == .error }
 
         for result in priorityResults.compactMap({ $0 }) where result.status != .error {
             return result
@@ -74,11 +86,20 @@ struct UpdateCheckCoordinator {
         return firstError ?? websiteResolver.unresolvedInfo(for: app)
     }
 
-    private func checkMackedIfEnabled(app: InstalledApp, userSource: UserUpdateSource?, settings: AppSettings) async -> AppUpdateInfo? {
+    private func checkMackedIfEnabled(
+        app: InstalledApp,
+        userSource: UserUpdateSource?,
+        settings: AppSettings,
+        cachedInfo: AppUpdateInfo?
+    ) async -> AppUpdateInfo? {
         guard settings.checkMackedApp else {
             return nil
         }
-        return await mackedChecker.check(app: app, userSource: userSource)
+        return await mackedChecker.check(
+            app: app,
+            userSource: userSource,
+            cachedPageURL: cachedInfo?.mackedPageURL
+        )
     }
 
     private func checkSparkleIfAvailable(app: InstalledApp, settings: AppSettings) async -> AppUpdateInfo? {
@@ -181,6 +202,7 @@ struct UpdateCheckCoordinator {
 
         var merged = normalizedOfficialInfo(official, app: app)
         let mackedVersion = trimmedVersion(macked.mackedLatestVersion) ?? trimmedVersion(macked.latestVersion)
+        let mackedBuild = trimmedVersion(macked.mackedLatestBuildVersion) ?? trimmedVersion(macked.latestBuildVersion)
         let mackedHasResult = macked.mackedPageURL != nil
             || macked.source?.pageURL != nil
             || macked.downloadURL != nil
@@ -192,6 +214,7 @@ struct UpdateCheckCoordinator {
         merged.mackedLoginURL = macked.mackedLoginURL ?? macked.loginURL
         merged.mackedSourceName = mackedHasResult ? UpdateSourceKind.mackedApp.title : nil
         merged.mackedLatestVersion = mackedHasResult ? mackedVersion : nil
+        merged.mackedLatestBuildVersion = mackedHasResult ? mackedBuild : nil
 
         if merged.officialPageURL == nil {
             merged.officialPageURL = macked.officialPageURL
@@ -212,7 +235,9 @@ struct UpdateCheckCoordinator {
 
         if !officialHasVersionSignal, mackedHasResult {
             merged.latestVersion = mackedVersion ?? merged.latestVersion
+            merged.latestBuildVersion = mackedBuild ?? merged.latestBuildVersion
             merged.officialLatestVersion = merged.officialLatestVersion ?? mackedVersion
+            merged.officialLatestBuildVersion = merged.officialLatestBuildVersion ?? mackedBuild
             if merged.officialPageURL == nil || merged.source?.kind == .manualSearch {
                 merged.officialPageURL = macked.officialPageURL ?? merged.mackedPageURL ?? macked.source?.pageURL
             }
@@ -247,6 +272,7 @@ struct UpdateCheckCoordinator {
         var normalized = info
         if normalized.source?.kind != .mackedApp {
             normalized.officialLatestVersion = normalized.officialLatestVersion ?? normalized.latestVersion
+            normalized.officialLatestBuildVersion = normalized.officialLatestBuildVersion ?? normalized.latestBuildVersion
             normalized.officialSourceName = normalized.officialSourceName ?? normalized.source?.name
             if normalized.officialDownloadURL == nil, normalized.downloadURL != normalized.mackedDownloadURL {
                 normalized.officialDownloadURL = normalized.downloadURL
@@ -255,6 +281,7 @@ struct UpdateCheckCoordinator {
             normalized.downloadURL = normalized.officialDownloadURL ?? normalized.mackedDownloadURL ?? normalized.downloadURL
         } else {
             normalized.mackedLatestVersion = normalized.mackedLatestVersion ?? normalized.latestVersion
+            normalized.mackedLatestBuildVersion = normalized.mackedLatestBuildVersion ?? normalized.latestBuildVersion
         }
         return applyingHighestKnownVersion(for: app, to: normalized)
     }
@@ -263,30 +290,55 @@ struct UpdateCheckCoordinator {
         var updated = info
         let officialVersion = trimmedVersion(updated.officialLatestVersion)
             ?? (updated.source?.kind == .mackedApp ? nil : trimmedVersion(updated.latestVersion))
+        let officialBuild = trimmedVersion(updated.officialLatestBuildVersion)
+            ?? (updated.source?.kind == .mackedApp ? nil : trimmedVersion(updated.latestBuildVersion))
         let mackedVersion = trimmedVersion(updated.mackedLatestVersion)
             ?? (updated.source?.kind == .mackedApp ? trimmedVersion(updated.latestVersion) : nil)
+        let mackedBuild = trimmedVersion(updated.mackedLatestBuildVersion)
+            ?? (updated.source?.kind == .mackedApp ? trimmedVersion(updated.latestBuildVersion) : nil)
 
         let selectedVersion: String?
+        let selectedBuild: String?
         let shouldRecalculateStatus: Bool
         switch (officialVersion, mackedVersion) {
         case let (.some(official), .some(macked)):
-            switch VersionComparator.compare(current: official, latest: macked) {
+            switch VersionComparator.compare(
+                current: official,
+                latest: macked,
+                currentBuild: officialBuild,
+                latestBuild: mackedBuild
+            ) {
             case .currentOlder:
                 selectedVersion = macked
+                selectedBuild = mackedBuild
                 shouldRecalculateStatus = true
             case .equal, .currentNewer:
-                selectedVersion = official
-                shouldRecalculateStatus = trimmedVersion(updated.latestVersion) != official
+                if officialBuild == nil, mackedBuild != nil,
+                   VersionComparator.compare(current: official, latest: macked) == .equal {
+                    selectedVersion = macked
+                    selectedBuild = mackedBuild
+                } else {
+                    selectedVersion = official
+                    selectedBuild = officialBuild
+                }
+                shouldRecalculateStatus = trimmedVersion(updated.latestVersion) != selectedVersion
+                    || trimmedVersion(updated.latestBuildVersion) != selectedBuild
                     || updated.source?.kind == .mackedApp
                     || updated.status == .unknown
                     || updated.status == .error
             case .unknown:
                 return updated
             }
-        case (.some, .none):
-            return updated
+        case let (.some(official), .none):
+            selectedVersion = official
+            selectedBuild = officialBuild
+            shouldRecalculateStatus = trimmedVersion(updated.latestVersion) != official
+                || trimmedVersion(updated.latestBuildVersion) != officialBuild
+                || updated.status == .unknown
+                || updated.status == .error
         case let (.none, .some(macked)):
             selectedVersion = macked
+            selectedBuild = mackedBuild
             shouldRecalculateStatus = true
         case (.none, .none):
             return updated
@@ -297,8 +349,14 @@ struct UpdateCheckCoordinator {
         }
 
         updated.latestVersion = selectedVersion
+        updated.latestBuildVersion = selectedBuild
         if shouldRecalculateStatus {
-            updated.status = statusFor(current: app.shortVersion ?? updated.currentVersion, latest: selectedVersion, currentBuild: app.buildVersion)
+            updated.status = statusFor(
+                current: app.shortVersion ?? updated.currentVersion,
+                latest: selectedVersion,
+                currentBuild: app.buildVersion,
+                latestBuild: selectedBuild
+            )
         }
         if updated.status == .updateAvailable || updated.status == .upToDate {
             updated.errorMessage = nil
@@ -306,8 +364,13 @@ struct UpdateCheckCoordinator {
         return updated
     }
 
-    private func statusFor(current: String?, latest: String?, currentBuild: String?) -> UpdateStatus {
-        switch VersionComparator.compare(current: current, latest: latest, currentBuild: currentBuild) {
+    private func statusFor(current: String?, latest: String?, currentBuild: String?, latestBuild: String?) -> UpdateStatus {
+        switch VersionComparator.compare(
+            current: current,
+            latest: latest,
+            currentBuild: currentBuild,
+            latestBuild: latestBuild
+        ) {
         case .currentOlder:
             return .updateAvailable
         case .equal, .currentNewer:

@@ -260,4 +260,62 @@ final class UpdateCheckCoordinatorValidationTests: XCTestCase {
         XCTAssertEqual(merged.mackedDownloadURL?.absoluteString, "https://macked.app/download")
         XCTAssertNil(merged.officialDownloadURL)
     }
+
+    func testMergeUsesNewerDetailedBuildWhenShortVersionsMatch() {
+        let app = InstalledApp(
+            name: "iMazing",
+            bundleIdentifier: "com.DigiDNA.iMazing3Mac",
+            shortVersion: "3.5.5",
+            buildVersion: "24057",
+            installPath: "/Applications/iMazing.app",
+            isSystemApp: false,
+            modificationDate: nil,
+            sparkleFeedURL: nil,
+            hasMacAppStoreReceipt: false,
+            scanPriority: 2
+        )
+        let official = AppUpdateInfo(
+            appID: app.id,
+            currentVersion: "3.5.5",
+            latestVersion: "3.5.5",
+            latestBuildVersion: "24057",
+            status: .upToDate,
+            source: UpdateSource(kind: .sparkleAppcast, name: "Sparkle", identifier: nil, pageURL: nil, feedURL: nil),
+            officialPageURL: nil,
+            downloadURL: nil,
+            releaseNotesURL: nil,
+            lastCheckedAt: Date(),
+            errorMessage: nil
+        )
+        let macked = AppUpdateInfo(
+            appID: app.id,
+            currentVersion: "3.5.5",
+            latestVersion: "3.5.5",
+            latestBuildVersion: "24058",
+            status: .updateAvailable,
+            source: UpdateSource(
+                kind: .mackedApp,
+                name: "Macked.app",
+                identifier: nil,
+                pageURL: URL(string: "https://macked.app/imazing-3-crack.html"),
+                feedURL: nil
+            ),
+            officialPageURL: nil,
+            downloadURL: nil,
+            releaseNotesURL: nil,
+            mackedPageURL: URL(string: "https://macked.app/imazing-3-crack.html"),
+            mackedSourceName: "Macked.app",
+            mackedLatestVersion: "3.5.5",
+            mackedLatestBuildVersion: "24058",
+            lastCheckedAt: Date(),
+            errorMessage: nil
+        )
+
+        let merged = UpdateCheckCoordinator().merge(app: app, official: official, macked: macked)
+
+        XCTAssertEqual(merged.status, .updateAvailable)
+        XCTAssertEqual(merged.latestVersion, "3.5.5")
+        XCTAssertEqual(merged.latestBuildVersion, "24058")
+        XCTAssertEqual(merged.latestDisplayVersion, "3.5.5 (24058)")
+    }
 }

@@ -28,6 +28,7 @@ final class AuthorizedUpdateCatalogCheckerTests: XCTestCase {
 
         XCTAssertEqual(result.status, .updateAvailable)
         XCTAssertEqual(result.latestVersion, "2.0.0")
+        XCTAssertEqual(result.latestBuildVersion, "200")
         XCTAssertEqual(result.source?.kind, .authorizedCatalog)
         XCTAssertEqual(result.source?.name, "Example Authorized Catalog")
         XCTAssertEqual(result.officialPageURL?.absoluteString, "https://example.com/apps/fixture")

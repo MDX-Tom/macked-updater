@@ -18,7 +18,7 @@ enum UpdateStatus: String, Codable, CaseIterable, Hashable {
         case .updateAvailable:
             return "Update Available"
         case .error:
-            return "Error"
+            return "Unknown"
         }
     }
 }

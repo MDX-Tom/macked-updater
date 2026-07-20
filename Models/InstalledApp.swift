@@ -15,13 +15,7 @@ struct InstalledApp: Codable, Hashable, Identifiable {
     var scanPriority: Int
 
     var displayVersion: String {
-        if let shortVersion, !shortVersion.isEmpty {
-            return shortVersion
-        }
-        if let buildVersion, !buildVersion.isEmpty {
-            return buildVersion
-        }
-        return "Unknown"
+        DetailedVersion(version: shortVersion, build: buildVersion).displayString ?? "Unknown"
     }
 
     var bundleDisplay: String {

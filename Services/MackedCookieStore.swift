@@ -8,10 +8,18 @@ struct MackedLoginState: Hashable {
 }
 
 enum MackedCookieStore {
+    @MainActor private static var cachedCookieHeader: String?
+    @MainActor private static var cookieHeaderExpiresAt = Date.distantPast
+    @MainActor private static var hasCachedCookieHeader = false
+
     @MainActor
     static func loginState(verifyRemotely: Bool = true) async -> MackedLoginState {
         let cookies = await allCookies()
         let mackedCookies = cookies.filter { $0.domain.contains("macked.app") }
+        let header = makeCookieHeader(from: mackedCookies, for: URL(string: "https://macked.app/user")!)
+        cachedCookieHeader = header
+        cookieHeaderExpiresAt = Date().addingTimeInterval(2 * 60)
+        hasCachedCookieHeader = true
         let hasLoginCookie = mackedCookies.contains { cookie in
             cookie.name.lowercased().contains("wordpress_logged_in") ||
                 cookie.name.lowercased().contains("zibll") ||
@@ -26,7 +34,7 @@ enum MackedCookieStore {
             )
         }
 
-        if verifyRemotely, let cookieHeader = await cookieHeader(for: URL(string: "https://macked.app/user")!) {
+        if verifyRemotely, let cookieHeader = header {
             do {
                 let verified = try await verifySession(cookieHeader: cookieHeader)
                 return MackedLoginState(
@@ -52,7 +60,24 @@ enum MackedCookieStore {
 
     @MainActor
     static func cookieHeader(for url: URL) async -> String? {
+        guard let host = url.host?.lowercased(), host == "macked.app" || host.hasSuffix(".macked.app") else {
+            return nil
+        }
+
+        if hasCachedCookieHeader, cookieHeaderExpiresAt > Date() {
+            return cachedCookieHeader
+        }
+
         let cookies = await allCookies()
+        let header = makeCookieHeader(from: cookies, for: url)
+        cachedCookieHeader = header
+        cookieHeaderExpiresAt = Date().addingTimeInterval(2 * 60)
+        hasCachedCookieHeader = true
+        return header
+    }
+
+    @MainActor
+    private static func makeCookieHeader(from cookies: [HTTPCookie], for url: URL) -> String? {
         let applicable = cookies.filter { cookie in
             guard cookie.domain.contains("macked.app") else { return false }
             guard let host = url.host?.lowercased() else { return false }

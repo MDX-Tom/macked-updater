@@ -14,9 +14,12 @@ enum VersionComparator {
         currentBuild: String? = nil,
         latestBuild: String? = nil
     ) -> VersionComparisonOutcome {
+        let currentDetails = DetailedVersion(version: current, build: currentBuild)
+        let latestDetails = DetailedVersion(version: latest, build: latestBuild)
+
         guard
-            let current = current?.trimmingCharacters(in: .whitespacesAndNewlines),
-            let latest = latest?.trimmingCharacters(in: .whitespacesAndNewlines),
+            let current = currentDetails.version,
+            let latest = latestDetails.version,
             !current.isEmpty,
             !latest.isEmpty
         else {
@@ -24,7 +27,7 @@ enum VersionComparator {
         }
 
         if current.caseInsensitiveCompare(latest) == .orderedSame {
-            return compareBuild(currentBuild: currentBuild, latestBuild: latestBuild) ?? .equal
+            return compareBuild(currentBuild: currentDetails.build, latestBuild: latestDetails.build) ?? .equal
         }
 
         guard
@@ -44,7 +47,7 @@ enum VersionComparator {
             return prereleaseComparison == .orderedAscending ? .currentOlder : .currentNewer
         }
 
-        return compareBuild(currentBuild: currentBuild, latestBuild: latestBuild) ?? .equal
+        return compareBuild(currentBuild: currentDetails.build, latestBuild: latestDetails.build) ?? .equal
     }
 
     static func isLatestVersionNewer(current: String?, latest: String?, currentBuild: String? = nil, latestBuild: String? = nil) -> Bool? {

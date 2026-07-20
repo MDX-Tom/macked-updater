@@ -34,4 +34,48 @@ final class VersionComparatorTests: XCTestCase {
             .unknown
         )
     }
+
+    func testComparesDetailedBuildNumbers() {
+        XCTAssertEqual(
+            VersionComparator.compare(
+                current: "3.5.5",
+                latest: "3.5.5",
+                currentBuild: "24057",
+                latestBuild: "24058"
+            ),
+            .currentOlder
+        )
+        XCTAssertEqual(
+            VersionComparator.compare(
+                current: "3.5.5",
+                latest: "3.5.5-24058",
+                currentBuild: "24057"
+            ),
+            .currentOlder
+        )
+    }
+
+    func testDetailedVersionDisplayAvoidsDuplicateBuild() {
+        XCTAssertEqual(
+            DetailedVersion(version: "3.5.5", build: "24057").displayString,
+            "3.5.5 (24057)"
+        )
+        XCTAssertEqual(
+            DetailedVersion(version: "3.5.5 (24057)", build: "24057").displayString,
+            "3.5.5 (24057)"
+        )
+        XCTAssertEqual(
+            DetailedVersion(version: "3.5.5.24057", build: "24057").displayString,
+            "3.5.5 (24057)"
+        )
+        XCTAssertEqual(
+            VersionComparator.compare(
+                current: "3.5.5.24057",
+                latest: "3.5.5",
+                currentBuild: "24057",
+                latestBuild: "24058"
+            ),
+            .currentOlder
+        )
+    }
 }

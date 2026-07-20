@@ -4,6 +4,7 @@ struct MackedAppSearchResult: Hashable, Identifiable {
     var name: String
     var title: String
     var latestVersion: String?
+    var latestBuildVersion: String? = nil
     var detailURL: URL
     var imageURL: URL?
     var summary: String?
@@ -15,6 +16,7 @@ struct MackedAppDetail: Hashable {
     var name: String
     var title: String
     var latestVersion: String?
+    var latestBuildVersion: String? = nil
     var pageURL: URL
     var downloadURL: URL?
     var loginURL: URL
@@ -34,6 +36,19 @@ private struct MackedRESTSearchItem: Decodable {
 private actor MackedLookupCache {
     static let shared = MackedLookupCache()
 
+    private struct SearchEntry {
+        var value: [MackedAppSearchResult]
+        var expiresAt: Date
+    }
+
+    private struct DetailEntry {
+        var value: MackedAppDetail
+        var expiresAt: Date
+    }
+
+    private let timeToLive: TimeInterval = 10 * 60
+    private var searchEntries: [String: SearchEntry] = [:]
+    private var detailEntries: [String: DetailEntry] = [:]
     private var searchTasks: [String: Task<[MackedAppSearchResult], Error>] = [:]
     private var detailTasks: [String: Task<MackedAppDetail, Error>] = [:]
 
@@ -42,6 +57,11 @@ private actor MackedLookupCache {
         loader: @escaping @Sendable () async throws -> [MackedAppSearchResult]
     ) async throws -> [MackedAppSearchResult] {
         let key = query.normalizedForMackedCacheKey
+        if let entry = searchEntries[key], entry.expiresAt > Date() {
+            return entry.value
+        }
+        searchEntries.removeValue(forKey: key)
+
         if let task = searchTasks[key] {
             return try await task.value
         }
@@ -52,7 +72,10 @@ private actor MackedLookupCache {
         searchTasks[key] = task
 
         do {
-            return try await task.value
+            let value = try await task.value
+            searchTasks.removeValue(forKey: key)
+            searchEntries[key] = SearchEntry(value: value, expiresAt: Date().addingTimeInterval(timeToLive))
+            return value
         } catch {
             searchTasks.removeValue(forKey: key)
             throw error
@@ -64,6 +87,11 @@ private actor MackedLookupCache {
         loader: @escaping @Sendable () async throws -> MackedAppDetail
     ) async throws -> MackedAppDetail {
         let key = pageURL.absoluteString
+        if let entry = detailEntries[key], entry.expiresAt > Date() {
+            return entry.value
+        }
+        detailEntries.removeValue(forKey: key)
+
         if let task = detailTasks[key] {
             return try await task.value
         }
@@ -74,7 +102,10 @@ private actor MackedLookupCache {
         detailTasks[key] = task
 
         do {
-            return try await task.value
+            let value = try await task.value
+            detailTasks.removeValue(forKey: key)
+            detailEntries[key] = DetailEntry(value: value, expiresAt: Date().addingTimeInterval(timeToLive))
+            return value
         } catch {
             detailTasks.removeValue(forKey: key)
             throw error
@@ -111,9 +142,7 @@ struct MackedAppChecker {
 
         do {
             let restResults = try await searchREST(query: trimmed)
-            if !restResults.isEmpty {
-                return restResults
-            }
+            return restResults
         } catch {
             // Fall back to the public HTML search page below. The HTML parser is
             // intentionally kept because the WordPress REST endpoint can be
@@ -141,78 +170,52 @@ struct MackedAppChecker {
             return []
         }
 
-        var queries: [String] = []
-        if let preferredQuery, !preferredQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            queries.append(preferredQuery)
-        }
-        queries.append(contentsOf: searchAliases(for: app))
-
-        let uniqueQueries = queries
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty && isUsefulMackedSearchQuery($0) }
-            .uniquedPreservingOrder()
-            .prefix(4)
-
-        guard !uniqueQueries.isEmpty else {
-            return []
-        }
-
-        var resultsByQueryIndex: [Int: [MackedAppSearchResult]] = [:]
+        let queries = searchQueries(for: app, preferredQuery: preferredQuery)
+        var allResults: [MackedAppSearchResult] = []
+        var seen: Set<String> = []
         var firstError: Error?
         var successCount = 0
 
-        await withTaskGroup(of: (Int, Result<[MackedAppSearchResult], Error>).self) { group in
-            for (index, query) in uniqueQueries.enumerated() {
-                group.addTask {
-                    do {
-                        return (index, .success(try await search(query: query)))
-                    } catch {
-                        return (index, .failure(error))
-                    }
+        for query in queries {
+            do {
+                let results = try await search(query: query)
+                successCount += 1
+                for result in results where seen.insert(result.detailURL.absoluteString).inserted {
+                    allResults.append(result)
                 }
-            }
-
-            for await (index, result) in group {
-                switch result {
-                case .success(let results):
-                    successCount += 1
-                    resultsByQueryIndex[index] = results
-                case .failure(let error):
-                    firstError = firstError ?? error
-                }
+            } catch {
+                firstError = firstError ?? error
             }
         }
 
         if successCount == 0, let firstError {
             throw firstError
         }
-
-        var allResults: [MackedAppSearchResult] = []
-        var seen: Set<String> = []
-        for index in uniqueQueries.indices {
-            for result in resultsByQueryIndex[index] ?? [] where seen.insert(result.detailURL.absoluteString).inserted {
-                allResults.append(result)
-            }
-        }
-
         return allResults
     }
 
-    func check(app: InstalledApp, userSource: UserUpdateSource? = nil) async -> AppUpdateInfo? {
+    func check(
+        app: InstalledApp,
+        userSource: UserUpdateSource? = nil,
+        cachedPageURL: URL? = nil
+    ) async -> AppUpdateInfo? {
         let explicitPageURL = userSource?.mackedAppURL
-        let query = userSource?.trimmedMackedSearchQuery ?? app.name
-        let knownPageURL = explicitPageURL ?? Self.knownMackedPageURL(for: app)
+        let preferredQuery = userSource?.trimmedMackedSearchQuery
+        let knownPageURL = Self.knownMackedPageURL(for: app)
+        let trustedPageURL = explicitPageURL ?? knownPageURL
+        let initialPageURL = trustedPageURL ?? cachedPageURL
+        let query = preferredQuery ?? app.name
 
-        let sourceIdentifier = knownPageURL?.absoluteString ?? query
+        let sourceIdentifier = initialPageURL?.absoluteString ?? query
         let source = UpdateSource(
             kind: .mackedApp,
             name: UpdateSourceKind.mackedApp.title,
             identifier: sourceIdentifier,
-            pageURL: knownPageURL,
+            pageURL: initialPageURL,
             feedURL: nil
         )
 
-        if knownPageURL == nil, Self.shouldSkipMackedLookup(for: app) {
+        if initialPageURL == nil, Self.shouldSkipMackedLookup(for: app) {
             return AppUpdateInfo(
                 appID: app.id,
                 currentVersion: app.shortVersion,
@@ -230,18 +233,36 @@ struct MackedAppChecker {
         }
 
         do {
-            let pageURL: URL
-            if let knownPageURL {
-                pageURL = knownPageURL
-            } else {
-                let results = try await search(app: app, preferredQuery: query)
-                guard let best = bestMatch(for: app, in: results) else {
+            var pageURL: URL?
+            var resolvedDetail: MackedAppDetail?
+
+            if let trustedPageURL {
+                pageURL = trustedPageURL
+                resolvedDetail = try await detail(pageURL: trustedPageURL)
+            } else if let cachedPageURL {
+                do {
+                    pageURL = cachedPageURL
+                    resolvedDetail = try await detail(pageURL: cachedPageURL)
+                } catch {
+                    pageURL = nil
+                    resolvedDetail = nil
+                }
+            }
+
+            if pageURL == nil {
+                guard let best = try await resolveBestMatch(for: app, preferredQuery: preferredQuery) else {
                     return AppUpdateInfo(
                         appID: app.id,
                         currentVersion: app.shortVersion,
                         latestVersion: nil,
                         status: .unknown,
-                        source: source,
+                        source: UpdateSource(
+                            kind: .mackedApp,
+                            name: UpdateSourceKind.mackedApp.title,
+                            identifier: query,
+                            pageURL: nil,
+                            feedURL: nil
+                        ),
                         officialPageURL: nil,
                         downloadURL: nil,
                         releaseNotesURL: nil,
@@ -252,14 +273,24 @@ struct MackedAppChecker {
                     )
                 }
                 pageURL = best.detailURL
+                resolvedDetail = try await detail(pageURL: best.detailURL)
             }
 
-            let detail = try await detail(pageURL: pageURL)
-            let status = statusFor(current: app.shortVersion, latest: detail.latestVersion, currentBuild: app.buildVersion)
+            guard let pageURL, let detail = resolvedDetail else {
+                throw URLError(.cannotParseResponse)
+            }
+
+            let status = statusFor(
+                current: app.shortVersion,
+                latest: detail.latestVersion,
+                currentBuild: app.buildVersion,
+                latestBuild: detail.latestBuildVersion
+            )
             return AppUpdateInfo(
                 appID: app.id,
                 currentVersion: app.shortVersion,
                 latestVersion: detail.latestVersion,
+                latestBuildVersion: detail.latestBuildVersion,
                 status: status,
                 source: UpdateSource(
                     kind: .mackedApp,
@@ -280,6 +311,7 @@ struct MackedAppChecker {
                 mackedLoginURL: detail.loginURL,
                 mackedSourceName: UpdateSourceKind.mackedApp.title,
                 mackedLatestVersion: detail.latestVersion,
+                mackedLatestBuildVersion: detail.latestBuildVersion,
                 lastCheckedAt: Date(),
                 errorMessage: status == .unknown ? "Macked.app returned metadata, but the version could not be compared safely." : nil
             )
@@ -290,15 +322,55 @@ struct MackedAppChecker {
                 latestVersion: nil,
                 status: .error,
                 source: source,
-                officialPageURL: knownPageURL,
+                officialPageURL: initialPageURL,
                 downloadURL: nil,
-                releaseNotesURL: knownPageURL,
-                loginURL: loginURL(redirectingTo: knownPageURL ?? baseURL),
-                mackedLoginURL: loginURL(redirectingTo: knownPageURL ?? baseURL),
+                releaseNotesURL: initialPageURL,
+                loginURL: loginURL(redirectingTo: initialPageURL ?? baseURL),
+                mackedLoginURL: loginURL(redirectingTo: initialPageURL ?? baseURL),
                 lastCheckedAt: Date(),
                 errorMessage: error.localizedDescription
             )
         }
+    }
+
+    private func resolveBestMatch(
+        for app: InstalledApp,
+        preferredQuery: String?
+    ) async throws -> MackedAppSearchResult? {
+        var firstError: Error?
+        var completedRequest = false
+
+        for query in searchQueries(for: app, preferredQuery: preferredQuery) {
+            do {
+                let results = try await search(query: query)
+                completedRequest = true
+                if let match = bestMatch(for: app, in: results) {
+                    return match
+                }
+            } catch {
+                firstError = firstError ?? error
+            }
+        }
+
+        if !completedRequest, let firstError {
+            throw firstError
+        }
+        return nil
+    }
+
+    private func searchQueries(for app: InstalledApp, preferredQuery: String?) -> [String] {
+        var queries: [String] = []
+        if let preferredQuery {
+            queries.append(preferredQuery)
+        }
+        queries.append(contentsOf: searchAliases(for: app))
+        return Array(
+            queries
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty && isUsefulMackedSearchQuery($0) }
+                .uniquedPreservingOrder()
+                .prefix(3)
+        )
     }
 
     static func parseSearchResults(html: String, baseURL: URL) -> [MackedAppSearchResult] {
@@ -323,7 +395,8 @@ struct MackedAppChecker {
 
             let tooltip = block.firstMatch(pattern: #"data-tippy-content=([\"'])([\s\S]*?)\1"#)?.capture(2).htmlDecoded ?? ""
             let name = value(after: "软件名称", in: tooltip)?.strippingHTML.htmlDecoded.trimmed ?? displayName(from: rawTitle)
-            let latestVersion = value(after: "软件版本", in: tooltip)?.strippingHTML.htmlDecoded.trimmed ?? extractLikelyVersion(from: rawTitle)
+            let rawLatestVersion = value(after: "软件版本", in: tooltip)?.strippingHTML.htmlDecoded.trimmed ?? extractLikelyVersion(from: rawTitle)
+            let detailedVersion = DetailedVersion(version: rawLatestVersion)
             let imageRaw = block.firstMatch(pattern: #"<img\b[^>]*(?:data-src|src)=[\"']([^\"']+)[\"']"#)?.capture(1)
             let imageURL = imageRaw.flatMap { normalizedURL($0.htmlDecoded, baseURL: baseURL) }
             let summary = block.firstMatch(pattern: #"</h[1-3]>\s*<div[^>]*>([\s\S]*?)</div>"#)?.capture(1).strippingHTML.htmlDecoded.trimmed
@@ -332,7 +405,8 @@ struct MackedAppChecker {
                 MackedAppSearchResult(
                     name: name.isEmpty ? rawTitle : name,
                     title: rawTitle,
-                    latestVersion: latestVersion,
+                    latestVersion: detailedVersion.version,
+                    latestBuildVersion: detailedVersion.build,
                     detailURL: detailURL,
                     imageURL: imageURL,
                     summary: summary?.isEmpty == true ? nil : summary
@@ -351,8 +425,9 @@ struct MackedAppChecker {
             ?? resolvedPageURL.lastPathComponent
         let compactTitle = title.components(separatedBy: "|").first?.trimmed ?? title
         let name = displayName(from: compactTitle)
-        let latestVersion = extractLikelyVersion(from: compactTitle)
+        let rawLatestVersion = extractLikelyVersion(from: compactTitle)
             ?? html.valueFromVisibleInfo(label: "软件版本")
+        let detailedVersion = DetailedVersion(version: rawLatestVersion)
         let downloadRaw = html.firstMatch(pattern: #"href=[\"']([^\"']*zibpay/download\.php[^\"']*)[\"']"#)?.capture(1).htmlDecoded
         let downloadURL = downloadRaw.flatMap { normalizedURL($0, baseURL: resolvedPageURL) }
             ?? directContentDownloadURL(from: html, pageURL: resolvedPageURL)
@@ -361,7 +436,8 @@ struct MackedAppChecker {
         return MackedAppDetail(
             name: name,
             title: compactTitle,
-            latestVersion: latestVersion,
+            latestVersion: detailedVersion.version,
+            latestBuildVersion: detailedVersion.build,
             pageURL: resolvedPageURL,
             downloadURL: downloadURL,
             loginURL: loginURL(redirectingTo: resolvedPageURL),
@@ -472,10 +548,12 @@ struct MackedAppChecker {
 
             let title = item.title.strippingHTML.htmlDecoded.trimmed
             let name = displayName(from: title)
+            let detailedVersion = DetailedVersion(version: extractLikelyVersion(from: title))
             return MackedAppSearchResult(
                 name: name.isEmpty ? title : name,
                 title: title,
-                latestVersion: extractLikelyVersion(from: title),
+                latestVersion: detailedVersion.version,
+                latestBuildVersion: detailedVersion.build,
                 detailURL: detailURL,
                 imageURL: nil,
                 summary: nil
@@ -537,13 +615,23 @@ struct MackedAppChecker {
                 let extraTokenPenalty = max(0, resultTokens.subtracting(appTokens).count - 4) * 5
                 return (result, max(0, tokenScore + importantBonus + exactSingleTokenBonus + overlapCountBonus - extraTokenPenalty))
             }
-            .sorted { $0.1 > $1.1 }
+            .sorted { left, right in
+                if left.1 != right.1 {
+                    return left.1 > right.1
+                }
+                return left.0.detailURL.absoluteString < right.0.detailURL.absoluteString
+            }
             .first { $0.1 >= 50 }?
             .0
     }
 
-    private func statusFor(current: String?, latest: String?, currentBuild: String?) -> UpdateStatus {
-        switch VersionComparator.compare(current: current, latest: latest, currentBuild: currentBuild) {
+    private func statusFor(current: String?, latest: String?, currentBuild: String?, latestBuild: String?) -> UpdateStatus {
+        switch VersionComparator.compare(
+            current: current,
+            latest: latest,
+            currentBuild: currentBuild,
+            latestBuild: latestBuild
+        ) {
         case .currentOlder:
             return .updateAvailable
         case .equal, .currentNewer:
@@ -555,7 +643,8 @@ struct MackedAppChecker {
 }
 
 private func searchAliases(for app: InstalledApp) -> [String] {
-    var values: [String] = [app.name]
+    var values: [String] = generationAliases(for: app)
+    values.append(app.name)
     let fileName = URL(fileURLWithPath: app.installPath).deletingPathExtension().lastPathComponent
     values.append(fileName)
     values.append(contentsOf: knownCompoundAliases(from: [app.name, fileName, app.bundleIdentifier].compactMap { $0 }))
@@ -594,7 +683,8 @@ private func searchAliases(for app: InstalledApp) -> [String] {
 }
 
 private func matchAliases(for app: InstalledApp) -> [String] {
-    var values: [String] = [app.name]
+    var values: [String] = generationAliases(for: app)
+    values.append(app.name)
     let fileName = URL(fileURLWithPath: app.installPath).deletingPathExtension().lastPathComponent
     values.append(fileName)
     values.append(contentsOf: knownCompoundAliases(from: [app.name, fileName, app.bundleIdentifier].compactMap { $0 }))
@@ -610,6 +700,29 @@ private func matchAliases(for app: InstalledApp) -> [String] {
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty }
         .uniquedPreservingOrder()
+}
+
+private func generationAliases(for app: InstalledApp) -> [String] {
+    let normalizedName = app.name.normalizedForMackedMatch
+    guard !normalizedName.isEmpty, let bundleIdentifier = app.bundleIdentifier else {
+        return []
+    }
+
+    let bundleProduct = bundleIdentifier.split(separator: ".").last.map(String.init) ?? bundleIdentifier
+    let normalizedProduct = bundleProduct.normalizedForMackedMatch
+    guard normalizedProduct.hasPrefix(normalizedName) else {
+        return []
+    }
+
+    let suffix = String(normalizedProduct.dropFirst(normalizedName.count))
+    guard
+        let digits = suffix.firstMatch(pattern: #"^([0-9]{1,3})"#)?.capture(1),
+        !digits.isEmpty
+    else {
+        return []
+    }
+
+    return ["\(app.name) \(digits)"]
 }
 
 private func knownCompoundAliases(from values: [String]) -> [String] {

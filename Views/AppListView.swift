@@ -79,9 +79,9 @@ struct AppListView: View {
             Text("App")
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text("Current")
-                .frame(width: 86, alignment: .leading)
+                .frame(width: 116, alignment: .leading)
             Text("Latest")
-                .frame(width: 150, alignment: .leading)
+                .frame(width: 168, alignment: .leading)
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
@@ -125,22 +125,24 @@ private struct AppListRow: View, Equatable {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text(app.displayVersion)
-                    .font(.callout.monospacedDigit())
+                    .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .frame(width: 86, alignment: .leading)
+                    .minimumScaleFactor(0.72)
+                    .frame(width: 116, alignment: .leading)
 
                 VStack(alignment: .leading, spacing: 7) {
-                    Text(info.latestVersion ?? "Unknown")
-                        .font(.callout.monospacedDigit().weight(info.latestVersion == nil ? .regular : .semibold))
+                    Text(info.latestDisplayVersion ?? "Unknown")
+                        .font(.caption.monospacedDigit().weight(info.latestVersion == nil ? .regular : .semibold))
                         .foregroundStyle(info.status.tintColor)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .minimumScaleFactor(0.72)
 
                     StatusBadge(status: info.status)
                 }
-                .frame(width: 150, alignment: .leading)
+                .frame(width: 168, alignment: .leading)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)

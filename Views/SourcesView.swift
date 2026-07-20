@@ -379,7 +379,10 @@ private struct MackedResultRow: View {
 
                 Spacer()
 
-                if let version = result.detail?.latestVersion ?? result.searchResult.latestVersion {
+                if let version = DetailedVersion(
+                    version: result.detail?.latestVersion ?? result.searchResult.latestVersion,
+                    build: result.detail?.latestBuildVersion ?? result.searchResult.latestBuildVersion
+                ).displayString {
                     Text(version)
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)

@@ -3,6 +3,7 @@ import Foundation
 actor HomebrewCaskChecker {
     private var cachedCasks: [String: HomebrewCaskInfo]?
     private var cachedCasksLoadTask: Task<[String: HomebrewCaskInfo], Error>?
+    private var cachedCasksLoadError: Error?
     private let brewURL: URL?
 
     init() {
@@ -31,9 +32,14 @@ actor HomebrewCaskChecker {
                 return nil
             }
 
-            let latestVersion = cask.version
-            let comparableLatest = cask.comparableVersion
-            let status = statusFor(current: app.shortVersion, latest: comparableLatest, currentBuild: app.buildVersion)
+            let latestVersion = cask.comparableVersion
+            let latestBuild = cask.comparableBuildVersion
+            let status = statusFor(
+                current: app.shortVersion,
+                latest: latestVersion,
+                currentBuild: app.buildVersion,
+                latestBuild: latestBuild
+            )
             let source = UpdateSource(
                 kind: .homebrewCask,
                 name: "Homebrew Cask: \(cask.token)",
@@ -46,6 +52,7 @@ actor HomebrewCaskChecker {
                 appID: app.id,
                 currentVersion: app.shortVersion,
                 latestVersion: latestVersion,
+                latestBuildVersion: latestBuild,
                 status: status,
                 source: source,
                 officialPageURL: cask.homepage,
@@ -75,6 +82,10 @@ actor HomebrewCaskChecker {
             return cachedCasks
         }
 
+        if let cachedCasksLoadError {
+            throw cachedCasksLoadError
+        }
+
         if let cachedCasksLoadTask {
             return try await cachedCasksLoadTask.value
         }
@@ -91,40 +102,21 @@ actor HomebrewCaskChecker {
             return casks
         } catch {
             cachedCasksLoadTask = nil
+            cachedCasksLoadError = error
             throw error
         }
     }
 
     private static func loadInstalledCaskInfo(brewURL: URL) async throws -> [String: HomebrewCaskInfo] {
-        let listOutput = try await ProcessRunner.run(
+        let output = try await ProcessRunner.run(
             executableURL: brewURL,
-            arguments: ["list", "--cask", "--versions"],
+            arguments: ["info", "--cask", "--json=v2", "--installed"],
             environment: ["HOMEBREW_NO_AUTO_UPDATE": "1"]
         )
-
-        let tokens = listOutput
-            .split(separator: "\n")
-            .compactMap { line -> String? in
-                let token = line.split(separator: " ").first.map(String.init)
-                return token?.isEmpty == false ? token : nil
-            }
-
-        guard !tokens.isEmpty else {
-            return [:]
-        }
-
         var casks: [String: HomebrewCaskInfo] = [:]
-        for batch in tokens.chunked(into: 24) {
-            let output = try await ProcessRunner.run(
-                executableURL: brewURL,
-                arguments: ["info", "--cask", "--json=v2"] + batch,
-                environment: ["HOMEBREW_NO_AUTO_UPDATE": "1"]
-            )
-            for info in try Self.parseCaskInfoJSON(output) {
-                casks[info.token] = info
-            }
+        for info in try Self.parseCaskInfoJSON(output) {
+            casks[info.token] = info
         }
-
         return casks
     }
 
@@ -163,12 +155,17 @@ actor HomebrewCaskChecker {
         }
     }
 
-    private func statusFor(current: String?, latest: String?, currentBuild: String?) -> UpdateStatus {
+    private func statusFor(current: String?, latest: String?, currentBuild: String?, latestBuild: String?) -> UpdateStatus {
         guard latest?.lowercased() != "latest" else {
             return .unknown
         }
 
-        switch VersionComparator.compare(current: current, latest: latest, currentBuild: currentBuild) {
+        switch VersionComparator.compare(
+            current: current,
+            latest: latest,
+            currentBuild: currentBuild,
+            latestBuild: latestBuild
+        ) {
         case .currentOlder:
             return .updateAvailable
         case .equal, .currentNewer:
@@ -225,6 +222,18 @@ struct HomebrewCaskInfo: Hashable {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    var comparableBuildVersion: String? {
+        let components = version.split(separator: ",", omittingEmptySubsequences: true)
+        guard components.count > 1 else {
+            return nil
+        }
+        let build = components[1].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !build.isEmpty, build.allSatisfy(\.isNumber) else {
+            return nil
+        }
+        return build
+    }
+
     init?(json: [String: Any]) {
         guard let token = json["token"] as? String else {
             return nil
@@ -271,15 +280,6 @@ struct HomebrewCaskInfo: Hashable {
 
         walk(value)
         return Array(Set(names))
-    }
-}
-
-private extension Array {
-    func chunked(into size: Int) -> [[Element]] {
-        guard size > 0 else { return [self] }
-        return stride(from: 0, to: count, by: size).map {
-            Array(self[$0..<Swift.min($0 + size, count)])
-        }
     }
 }
 

@@ -4,7 +4,9 @@ struct AppUpdateInfo: Codable, Hashable, Identifiable {
     var appID: String
     var currentVersion: String?
     var latestVersion: String?
+    var latestBuildVersion: String? = nil
     var officialLatestVersion: String? = nil
+    var officialLatestBuildVersion: String? = nil
     var status: UpdateStatus
     var source: UpdateSource?
     var officialPageURL: URL?
@@ -19,10 +21,23 @@ struct AppUpdateInfo: Codable, Hashable, Identifiable {
     var mackedLoginURL: URL? = nil
     var mackedSourceName: String? = nil
     var mackedLatestVersion: String? = nil
+    var mackedLatestBuildVersion: String? = nil
     var lastCheckedAt: Date?
     var errorMessage: String?
 
     var id: String { appID }
+
+    var latestDisplayVersion: String? {
+        DetailedVersion(version: latestVersion, build: latestBuildVersion).displayString
+    }
+
+    var officialLatestDisplayVersion: String? {
+        DetailedVersion(version: officialLatestVersion, build: officialLatestBuildVersion).displayString
+    }
+
+    var mackedLatestDisplayVersion: String? {
+        DetailedVersion(version: mackedLatestVersion, build: mackedLatestBuildVersion).displayString
+    }
 
     static func unknown(for app: InstalledApp, source: UpdateSource? = nil) -> AppUpdateInfo {
         AppUpdateInfo(

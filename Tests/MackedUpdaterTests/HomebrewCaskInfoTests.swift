@@ -20,6 +20,7 @@ final class HomebrewCaskInfoTests: XCTestCase {
         XCTAssertEqual(info.names, ["Fixture App"])
         XCTAssertEqual(info.version, "2.4.1,200")
         XCTAssertEqual(info.comparableVersion, "2.4.1")
+        XCTAssertEqual(info.comparableBuildVersion, "200")
         XCTAssertEqual(info.homepage?.absoluteString, "https://example.com")
         XCTAssertTrue(info.appNames.contains("Fixture App.app"))
         XCTAssertTrue(info.appNames.contains("Fixture.app"))
